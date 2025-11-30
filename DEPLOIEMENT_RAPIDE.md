@@ -25,7 +25,7 @@ git push origin main
 - [ ] Connecter le repository GitHub
 - [ ] Configurer :
   - **Name** : `gesmut-backend`
-  - **Root Directory** : `backend` ⚠️ IMPORTANT
+  - **Root Directory** : ⚠️ **LAISSER VIDE** (le repository `gesmut-backend` contient déjà le code à la racine)
   - **Build Command** : `npm ci --include=dev && npm run build`
   - **Start Command** : `npm run start:prod`
   - **Instance Type** : `Free`

@@ -19,6 +19,12 @@ Assurez-vous que votre projet est poussé sur GitHub :
 
 ```bash
 # Si ce n'est pas déjà fait
+# Si votre repository est gesmut-backend (code à la racine)
+git add .
+git commit -m "Préparation pour déploiement"
+git push origin main
+
+# OU si votre repository est GESMUT (avec sous-dossier backend)
 cd backend
 git add .
 git commit -m "Préparation pour déploiement"
@@ -93,7 +99,7 @@ Votre `package.json` doit contenir ces scripts (déjà présents) :
 3. Connectez votre repository GitHub si ce n'est pas déjà fait :
    - Cliquez sur **"Connect GitHub"**
    - Autorisez Render à accéder à vos repositories
-   - Sélectionnez le repository **GESMUT**
+   - Sélectionnez le repository **gesmut-backend** (ou **GESMUT** si c'est un repository parent)
 
 ### 4.2 Configurer le service
 
@@ -102,10 +108,14 @@ Remplissez les informations suivantes :
 - **Name** : `gesmut-backend` (ou le nom de votre choix)
 - **Region** : Choisissez la région la plus proche (ex: `Frankfurt` pour l'Europe)
 - **Branch** : `main` (ou la branche que vous utilisez)
-- **Root Directory** : `backend` ⚠️ **IMPORTANT** : Spécifiez `backend` car votre code est dans ce dossier
+- **Root Directory** : ⚠️ **LAISSER VIDE** - Le repository `gesmut-backend` contient déjà le code à la racine
 - **Runtime** : `Node`
 - **Build Command** : `npm ci --include=dev && npm run build`
 - **Start Command** : `npm run start:prod`
+  
+  ⚠️ **Alternative si problème de chemin** : Si vous rencontrez toujours l'erreur "Cannot find module", essayez :
+  - `bash start.sh` (si vous avez créé le script start.sh)
+  - Ou `cd /opt/render/project/src && npm run start:prod`
 - **Instance Type** : `Free` (gratuit)
 
 ### 4.3 Configurer les variables d'environnement
@@ -274,12 +284,32 @@ npm run init:admin
 
 ## 🐛 Résolution de problèmes
 
-### Problème : "Application failed to respond"
+### Problème : "Application failed to respond" ou "Cannot find module '/opt/render/project/src/dist/main'"
 
 **Solution** :
-- Vérifiez que le port est correctement configuré
-- Vérifiez les logs pour voir l'erreur exacte
-- Assurez-vous que `start:prod` est correct dans `package.json`
+1. **Vérifiez que le build a créé le dossier `dist`** :
+   - Dans les logs de build, vous devriez voir "Build successful"
+   - Le dossier `dist` devrait être créé pendant le build
+
+2. **Essayez ces solutions dans l'ordre** :
+   
+   **Solution 1** : Utiliser le chemin absolu que Render attend
+   - Start Command : `cd /opt/render/project/src && node dist/main.js`
+   
+   **Solution 2** : Utiliser le script shell
+   - Assurez-vous que `start.sh` est commité dans votre repository
+   - Start Command : `chmod +x start.sh && ./start.sh`
+   
+   **Solution 3** : Vérifier le répertoire de travail
+   - Start Command : `pwd && ls -la && ls -la dist/ && node dist/main.js`
+   - Cela vous montrera où se trouve le fichier dans les logs
+
+3. **Si votre repository est `gesmut-backend`** (code à la racine) :
+   - Root Directory : **LAISSER VIDE**
+   - Le build devrait créer `dist` à la racine du repository cloné
+
+4. **Vérifiez que le port est correctement configuré**
+5. **Vérifiez les logs pour voir l'erreur exacte**
 
 ### Problème : "Cannot connect to MongoDB"
 
@@ -301,7 +331,8 @@ npm run init:admin
 - Vérifiez que la commande de build est : `npm ci --include=dev && npm run build`
   - Si vous n'avez pas de `package-lock.json`, utilisez : `npm install --include=dev && npm run build`
 - Vérifiez les logs de build pour voir l'erreur exacte
-- Assurez-vous que `Root Directory` est défini sur `backend`
+- Si votre repository est `gesmut-backend` (code à la racine), laissez `Root Directory` vide
+- Si votre repository est `GESMUT` (avec sous-dossier `backend`), définissez `Root Directory` sur `backend`
 - Vérifiez que tous les fichiers nécessaires sont commités (notamment `package.json` et `package-lock.json`)
 
 ### Problème : "CORS error"
@@ -320,7 +351,7 @@ npm run init:admin
 - [ ] Utilisateur MongoDB créé
 - [ ] Chaîne de connexion MongoDB obtenue
 - [ ] Service Web créé sur Render
-- [ ] Root Directory défini sur `backend`
+- [ ] Root Directory configuré correctement (vide si repository `gesmut-backend`, ou `backend` si repository parent)
 - [ ] Toutes les variables d'environnement configurées
 - [ ] Déploiement réussi
 - [ ] Logs vérifiés (pas d'erreurs)
