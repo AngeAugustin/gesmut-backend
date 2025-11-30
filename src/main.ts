@@ -19,14 +19,30 @@ async function bootstrap() {
   
   app.enableCors({
     origin: (origin, callback) => {
-      // Autoriser les requêtes sans origine (comme les apps mobiles ou Postman)
-      if (!origin) return callback(null, true);
-      
-      // Vérifier si l'origine est autorisée
-      if (allowedOrigins.includes(origin) || origin.startsWith('http://192.168.') || origin.startsWith('http://10.') || origin.startsWith('http://172.')) {
-        callback(null, true);
+      // En production, être plus strict avec CORS
+      if (process.env.NODE_ENV === 'production') {
+        // Autoriser les requêtes sans origine uniquement si configuré
+        if (!origin) {
+          // En production, rejeter les requêtes sans origine par défaut
+          return callback(new Error('CORS: Origin required in production'));
+        }
+        
+        // Vérifier si l'origine est dans la liste autorisée
+        if (allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          callback(new Error(`CORS: Origin ${origin} not allowed`));
+        }
       } else {
-        callback(new Error('Not allowed by CORS'));
+        // En développement, être plus permissif
+        if (!origin) return callback(null, true);
+        
+        // Vérifier si l'origine est autorisée
+        if (allowedOrigins.includes(origin) || origin.startsWith('http://192.168.') || origin.startsWith('http://10.') || origin.startsWith('http://172.')) {
+          callback(null, true);
+        } else {
+          callback(new Error('Not allowed by CORS'));
+        }
       }
     },
     credentials: true,
@@ -55,30 +71,41 @@ async function bootstrap() {
     }),
   );
 
-  const port = process.env.PORT || 3000;
+  // Port : Render utilise PORT, certaines plateformes utilisent $PORT
+  const port = process.env.PORT || process.env.$PORT || 3000;
   await app.listen(port, '0.0.0.0');
   
-  // Afficher les URLs d'accès
-  const networkInterfaces = os.networkInterfaces();
-  let localIp = 'localhost';
-  
-  // Trouver l'adresse IP locale
-  for (const interfaceName in networkInterfaces) {
-    const interfaces = networkInterfaces[interfaceName];
-    for (const iface of interfaces) {
-      if (iface.family === 'IPv4' && !iface.internal && iface.address.startsWith('192.168.')) {
-        localIp = iface.address;
-        break;
-      }
-    }
-    if (localIp !== 'localhost') break;
-  }
-  
+  // Afficher les informations de démarrage
+  const env = process.env.NODE_ENV || 'development';
   console.log(`\n🚀 Application démarrée avec succès !`);
-  console.log(`📍 Local:     http://localhost:${port}`);
-  if (localIp !== 'localhost') {
-    console.log(`🌐 Réseau:    http://${localIp}:${port}`);
+  console.log(`📦 Environnement: ${env}`);
+  console.log(`🔌 Port: ${port}`);
+  
+  // Afficher les URLs d'accès (uniquement en développement)
+  if (env !== 'production') {
+    const networkInterfaces = os.networkInterfaces();
+    let localIp = 'localhost';
+    
+    // Trouver l'adresse IP locale
+    for (const interfaceName in networkInterfaces) {
+      const interfaces = networkInterfaces[interfaceName];
+      for (const iface of interfaces) {
+        if (iface.family === 'IPv4' && !iface.internal && iface.address.startsWith('192.168.')) {
+          localIp = iface.address;
+          break;
+        }
+      }
+      if (localIp !== 'localhost') break;
+    }
+    
+    console.log(`📍 Local:     http://localhost:${port}`);
+    if (localIp !== 'localhost') {
+      console.log(`🌐 Réseau:    http://${localIp}:${port}`);
+    }
+  } else {
+    console.log(`🌐 Production: Service disponible sur le port ${port}`);
   }
+  
   console.log(`\n`);
 }
 bootstrap();

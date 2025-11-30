@@ -1,0 +1,19 @@
+# Configuration Render.com (optionnel)
+# Ce fichier peut être utilisé pour automatiser la création de services sur Render
+# Vous pouvez aussi créer le service manuellement via l'interface web
+
+services:
+  - type: web
+    name: gesmut-backend
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:prod
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      # Les autres variables d'environnement doivent être ajoutées manuellement
+      # dans l'interface Render pour des raisons de sécurité
+      # (MONGODB_URI, JWT_SECRET, SMTP_*, etc.)
