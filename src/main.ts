@@ -12,12 +12,10 @@ async function bootstrap() {
   app.use(json({ limit: '10mb' }));
 
   // Enable CORS
-  // En production, utiliser CORS_ORIGIN, en développement autoriser localhost et réseau local
+  // Accepter les connexions depuis localhost et le réseau local
   const allowedOrigins = process.env.CORS_ORIGIN 
     ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
-    : process.env.NODE_ENV === 'production'
-      ? [] // En production, exiger CORS_ORIGIN pour la sécurité
-      : ['http://localhost:3001', 'http://192.168.1.61:3001'];
+    : ['http://localhost:3001', 'http://192.168.1.61:3001'];
   
   app.enableCors({
     origin: (origin, callback) => {
