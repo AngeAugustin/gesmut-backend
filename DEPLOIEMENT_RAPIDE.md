@@ -26,7 +26,7 @@ git push origin main
 - [ ] Configurer :
   - **Name** : `gesmut-backend`
   - **Root Directory** : `backend` ⚠️ IMPORTANT
-  - **Build Command** : `npm install && npm run build`
+  - **Build Command** : `npm ci --include=dev && npm run build`
   - **Start Command** : `npm run start:prod`
   - **Instance Type** : `Free`
 

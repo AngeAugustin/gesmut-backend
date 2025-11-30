@@ -104,7 +104,7 @@ Remplissez les informations suivantes :
 - **Branch** : `main` (ou la branche que vous utilisez)
 - **Root Directory** : `backend` ⚠️ **IMPORTANT** : Spécifiez `backend` car votre code est dans ce dossier
 - **Runtime** : `Node`
-- **Build Command** : `npm install && npm run build`
+- **Build Command** : `npm ci --include=dev && npm run build`
 - **Start Command** : `npm run start:prod`
 - **Instance Type** : `Free` (gratuit)
 
@@ -295,12 +295,14 @@ npm run init:admin
 - Vérifiez les identifiants Hostinger
 - Vérifiez que le port 587 n'est pas bloqué
 
-### Problème : "Build failed"
+### Problème : "Build failed" ou "nest: not found"
 
 **Solution** :
-- Vérifiez les logs de build
+- Vérifiez que la commande de build est : `npm ci --include=dev && npm run build`
+  - Si vous n'avez pas de `package-lock.json`, utilisez : `npm install --include=dev && npm run build`
+- Vérifiez les logs de build pour voir l'erreur exacte
 - Assurez-vous que `Root Directory` est défini sur `backend`
-- Vérifiez que tous les fichiers nécessaires sont commités
+- Vérifiez que tous les fichiers nécessaires sont commités (notamment `package.json` et `package-lock.json`)
 
 ### Problème : "CORS error"
 
