@@ -19,10 +19,18 @@ export class EmailService {
       const port = parseInt(smtpPort, 10);
       const isSecure = process.env.SMTP_SECURE === 'true';
       
+      this.logger.log('Configuration du transporteur SMTP:', {
+        host: smtpHost,
+        port: port,
+        secure: isSecure,
+        user: smtpUser,
+      });
+      
       this.transporter = nodemailer.createTransport({
         host: smtpHost,
         port: port,
         secure: isSecure, // true pour 465, false pour autres ports
+        requireTLS: !isSecure, // Require TLS pour le port 587
         auth: {
           user: smtpUser,
           pass: smtpPass,
@@ -35,7 +43,31 @@ export class EmailService {
         greetingTimeout: 30000, // 30 secondes pour la réponse du serveur
         socketTimeout: 60000, // 60 secondes pour les opérations socket
       } as any); // Type assertion pour éviter les erreurs TypeScript avec les options avancées
+      
+      // Tester la connexion SMTP au démarrage
+      this.verifyConnection().catch((error) => {
+        this.logger.warn('Échec de la vérification SMTP au démarrage:', error.message);
+      });
+      
       this.logger.log('Transporteur SMTP configuré avec succès');
+    }
+  }
+
+  /**
+   * Vérifie la connexion SMTP
+   */
+  private async verifyConnection(): Promise<void> {
+    if (!this.transporter) {
+      throw new Error('Transporteur SMTP non configuré');
+    }
+    
+    try {
+      this.logger.log('Vérification de la connexion SMTP...');
+      await this.transporter.verify();
+      this.logger.log('✅ Connexion SMTP vérifiée avec succès');
+    } catch (error) {
+      this.logger.error('❌ Échec de la vérification SMTP:', error.message);
+      throw error;
     }
   }
 
@@ -82,7 +114,18 @@ export class EmailService {
         })),
       };
 
-      const result = await this.transporter.sendMail(mailOptions);
+      this.logger.log('Tentative d\'envoi de l\'email...');
+      const startTime = Date.now();
+      
+      // Ajouter un timeout explicite pour éviter les blocages
+      const sendMailPromise = this.transporter.sendMail(mailOptions);
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Timeout: L\'envoi de l\'email a pris trop de temps (>90s)')), 90000);
+      });
+
+      const result = await Promise.race([sendMailPromise, timeoutPromise]) as any;
+      const duration = Date.now() - startTime;
+      this.logger.log(`Email envoyé en ${duration}ms`);
 
       this.logger.log('Email envoyé avec succès:', {
         messageId: result.messageId,
