@@ -16,17 +16,28 @@ export class EmailService {
       this.logger.warn('Configuration SMTP incomplète. Les emails ne pourront pas être envoyés.');
       this.logger.warn('Variables requises: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS');
     } else {
+      const port = parseInt(smtpPort, 10);
+      const isSecure = process.env.SMTP_SECURE === 'true';
+      
       this.transporter = nodemailer.createTransport({
         host: smtpHost,
-        port: parseInt(smtpPort, 10),
-        secure: process.env.SMTP_SECURE === 'true', // true pour 465, false pour autres ports
+        port: port,
+        secure: isSecure, // true pour 465, false pour autres ports
         auth: {
           user: smtpUser,
           pass: smtpPass,
         },
         tls: {
           rejectUnauthorized: process.env.SMTP_TLS_REJECT_UNAUTHORIZED !== 'false',
+          minVersion: 'TLSv1.2',
         },
+        connectionTimeout: 60000, // 60 secondes pour établir la connexion
+        greetingTimeout: 30000, // 30 secondes pour la réponse du serveur
+        socketTimeout: 60000, // 60 secondes pour les opérations socket
+        // Options supplémentaires pour améliorer la connexion
+        pool: false, // Désactiver le pool de connexions
+        maxConnections: 1,
+        maxMessages: 3,
       });
       this.logger.log('Transporteur SMTP configuré avec succès');
     }
