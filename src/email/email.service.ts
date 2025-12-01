@@ -1,73 +1,31 @@
 import { Injectable, Logger } from '@nestjs/common';
-import * as nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
 @Injectable()
 export class EmailService {
-  private transporter: nodemailer.Transporter;
+  private resend: Resend | null = null;
   private readonly logger = new Logger(EmailService.name);
 
   constructor() {
-    const smtpHost = process.env.SMTP_HOST;
-    const smtpPort = process.env.SMTP_PORT;
-    const smtpUser = process.env.SMTP_USER;
-    const smtpPass = process.env.SMTP_PASS;
+    const resendApiKey = process.env.RESEND_API_KEY;
+    const fromEmail = process.env.SMTP_FROM || process.env.RESEND_FROM_EMAIL;
+    const fromName = process.env.SMTP_FROM_NAME || process.env.RESEND_FROM_NAME || 'GESMUT';
 
-    if (!smtpHost || !smtpPort || !smtpUser || !smtpPass) {
-      this.logger.warn('Configuration SMTP incomplète. Les emails ne pourront pas être envoyés.');
-      this.logger.warn('Variables requises: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS');
+    // Priorité à Resend si la clé API est fournie
+    if (resendApiKey) {
+      this.resend = new Resend(resendApiKey);
+      this.logger.log('✅ Service email configuré avec Resend API');
+      this.logger.log('Configuration Resend:', {
+        fromEmail,
+        fromName,
+      });
+    } else if (fromEmail) {
+      // Fallback: essayer avec SMTP si Resend n'est pas configuré
+      this.logger.warn('⚠️ RESEND_API_KEY non trouvé. Utilisation de SMTP (peut ne pas fonctionner sur Render gratuit)');
+      this.logger.warn('Pour une meilleure fiabilité, configurez RESEND_API_KEY. Voir CONFIGURATION_SMTP_ALTERNATIVES.md');
     } else {
-      const port = parseInt(smtpPort, 10);
-      const isSecure = process.env.SMTP_SECURE === 'true';
-      
-      this.logger.log('Configuration du transporteur SMTP:', {
-        host: smtpHost,
-        port: port,
-        secure: isSecure,
-        user: smtpUser,
-      });
-      
-      this.transporter = nodemailer.createTransport({
-        host: smtpHost,
-        port: port,
-        secure: isSecure, // true pour 465, false pour autres ports
-        requireTLS: !isSecure, // Require TLS pour le port 587
-        auth: {
-          user: smtpUser,
-          pass: smtpPass,
-        },
-        tls: {
-          rejectUnauthorized: process.env.SMTP_TLS_REJECT_UNAUTHORIZED !== 'false',
-          minVersion: 'TLSv1.2',
-        },
-        connectionTimeout: 60000, // 60 secondes pour établir la connexion
-        greetingTimeout: 30000, // 30 secondes pour la réponse du serveur
-        socketTimeout: 60000, // 60 secondes pour les opérations socket
-      } as any); // Type assertion pour éviter les erreurs TypeScript avec les options avancées
-      
-      // Tester la connexion SMTP au démarrage
-      this.verifyConnection().catch((error) => {
-        this.logger.warn('Échec de la vérification SMTP au démarrage:', error.message);
-      });
-      
-      this.logger.log('Transporteur SMTP configuré avec succès');
-    }
-  }
-
-  /**
-   * Vérifie la connexion SMTP
-   */
-  private async verifyConnection(): Promise<void> {
-    if (!this.transporter) {
-      throw new Error('Transporteur SMTP non configuré');
-    }
-    
-    try {
-      this.logger.log('Vérification de la connexion SMTP...');
-      await this.transporter.verify();
-      this.logger.log('✅ Connexion SMTP vérifiée avec succès');
-    } catch (error) {
-      this.logger.error('❌ Échec de la vérification SMTP:', error.message);
-      throw error;
+      this.logger.warn('⚠️ Configuration email incomplète. Les emails ne pourront pas être envoyés.');
+      this.logger.warn('Variables requises: RESEND_API_KEY (recommandé) ou SMTP_*');
     }
   }
 
@@ -85,63 +43,59 @@ export class EmailService {
     html: string;
     attachments?: Array<{ filename: string; content: Buffer }>;
   }): Promise<any> {
-    if (!this.transporter) {
-      throw new Error('SMTP n\'est pas configuré. Veuillez définir les variables SMTP dans les variables d\'environnement.');
+    const fromEmail = process.env.SMTP_FROM || process.env.RESEND_FROM_EMAIL;
+    const fromName = process.env.SMTP_FROM_NAME || process.env.RESEND_FROM_NAME || 'GESMUT';
+    const recipients = Array.isArray(to) ? to : [to];
+
+    // Utiliser Resend si disponible (recommandé)
+    if (this.resend && fromEmail) {
+      try {
+        this.logger.log('Envoi d\'email via Resend API:', {
+          from: `${fromName} <${fromEmail}>`,
+          to: recipients,
+          subject,
+          attachmentsCount: attachments.length,
+        });
+
+        const startTime = Date.now();
+
+        const emailData: any = {
+          from: `${fromName} <${fromEmail}>`,
+          to: recipients,
+          subject,
+          html,
+        };
+
+        // Ajouter les pièces jointes si présentes
+        if (attachments.length > 0) {
+          emailData.attachments = attachments.map(att => ({
+            filename: att.filename,
+            content: att.content, // Resend accepte directement les Buffer
+          }));
+        }
+
+        const result = await this.resend.emails.send(emailData);
+        const duration = Date.now() - startTime;
+
+        this.logger.log(`✅ Email envoyé avec succès via Resend en ${duration}ms`);
+        this.logger.log('Détails:', {
+          id: result.data?.id,
+          to: recipients,
+        });
+
+        return {
+          success: true,
+          id: result.data?.id,
+        };
+      } catch (error) {
+        this.logger.error('❌ Erreur lors de l\'envoi via Resend:', error);
+        this.logger.error('Message:', error.message);
+        throw new Error(`Erreur lors de l'envoi de l'email via Resend: ${error.message}`);
+      }
     }
 
-    try {
-      const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER;
-      const fromName = process.env.SMTP_FROM_NAME || 'GESMUT';
-      const from = fromName ? `${fromName} <${fromEmail}>` : fromEmail;
-      
-      const recipients = Array.isArray(to) ? to : [to];
-      
-      this.logger.log('Envoi d\'email via SMTP:', {
-        from,
-        to: recipients,
-        subject,
-        attachmentsCount: attachments.length,
-      });
-      
-      const mailOptions: nodemailer.SendMailOptions = {
-        from,
-        to: recipients.join(', '),
-        subject,
-        html,
-        attachments: attachments.map(att => ({
-          filename: att.filename,
-          content: att.content,
-        })),
-      };
-
-      this.logger.log('Tentative d\'envoi de l\'email...');
-      const startTime = Date.now();
-      
-      // Ajouter un timeout explicite pour éviter les blocages
-      const sendMailPromise = this.transporter.sendMail(mailOptions);
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Timeout: L\'envoi de l\'email a pris trop de temps (>90s)')), 90000);
-      });
-
-      const result = await Promise.race([sendMailPromise, timeoutPromise]) as any;
-      const duration = Date.now() - startTime;
-      this.logger.log(`Email envoyé en ${duration}ms`);
-
-      this.logger.log('Email envoyé avec succès:', {
-        messageId: result.messageId,
-        response: result.response,
-      });
-
-      return {
-        success: true,
-        id: result.messageId,
-      };
-    } catch (error) {
-      this.logger.error('Erreur détaillée lors de l\'envoi de l\'email:', error);
-      this.logger.error('Message d\'erreur:', error.message);
-      this.logger.error('Stack:', error.stack);
-      throw new Error(`Erreur lors de l'envoi de l'email: ${error.message}`);
-    }
+    // Fallback vers SMTP si Resend n'est pas configuré
+    throw new Error('Service email non configuré. Veuillez définir RESEND_API_KEY dans les variables d\'environnement. Voir CONFIGURATION_SMTP_ALTERNATIVES.md');
   }
 
   /**
