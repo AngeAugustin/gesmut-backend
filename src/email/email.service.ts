@@ -34,11 +34,7 @@ export class EmailService {
         connectionTimeout: 60000, // 60 secondes pour établir la connexion
         greetingTimeout: 30000, // 30 secondes pour la réponse du serveur
         socketTimeout: 60000, // 60 secondes pour les opérations socket
-        // Options supplémentaires pour améliorer la connexion
-        pool: false, // Désactiver le pool de connexions
-        maxConnections: 1,
-        maxMessages: 3,
-      });
+      } as any); // Type assertion pour éviter les erreurs TypeScript avec les options avancées
       this.logger.log('Transporteur SMTP configuré avec succès');
     }
   }
