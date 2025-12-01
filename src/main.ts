@@ -12,18 +12,29 @@ async function bootstrap() {
   app.use(json({ limit: '10mb' }));
 
   // Enable CORS
-  // Accepter les connexions depuis localhost et le réseau local
+  const isDevelopment = process.env.NODE_ENV !== 'production';
   const allowedOrigins = process.env.CORS_ORIGIN 
     ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
-    : ['http://localhost:3001', 'http://192.168.1.61:3001'];
+    : isDevelopment 
+      ? ['http://localhost:3001', 'http://192.168.1.61:3001']
+      : [];
   
   app.enableCors({
     origin: (origin, callback) => {
       // Autoriser les requêtes sans origine (comme les apps mobiles ou Postman)
       if (!origin) return callback(null, true);
       
-      // Vérifier si l'origine est autorisée
-      if (allowedOrigins.includes(origin) || origin.startsWith('http://192.168.') || origin.startsWith('http://10.') || origin.startsWith('http://172.')) {
+      // En développement, autoriser aussi les IPs locales
+      if (isDevelopment && (
+        origin.startsWith('http://192.168.') || 
+        origin.startsWith('http://10.') || 
+        origin.startsWith('http://172.')
+      )) {
+        return callback(null, true);
+      }
+      
+      // Vérifier si l'origine est dans la liste autorisée
+      if (allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
         callback(new Error('Not allowed by CORS'));
