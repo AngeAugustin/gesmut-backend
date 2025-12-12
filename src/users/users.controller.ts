@@ -23,7 +23,12 @@ export class UsersController {
   @Roles(Role.ADMIN, Role.DNCF)
   findOne(@Param('id') id: string, @CurrentUser() currentUser: any) {
     // Un utilisateur peut voir ses propres données, ou un admin peut voir n'importe quel utilisateur
-    if (currentUser.role !== Role.ADMIN && currentUser.id !== id) {
+    const userRoles = (currentUser.roles && Array.isArray(currentUser.roles) && currentUser.roles.length > 0)
+      ? currentUser.roles
+      : (currentUser.role ? [currentUser.role] : []);
+    const isAdmin = userRoles.includes(Role.ADMIN);
+    
+    if (!isAdmin && currentUser.id !== id) {
       throw new ForbiddenException('Vous ne pouvez accéder qu\'à vos propres données');
     }
     return this.usersService.findOne(id);
@@ -34,12 +39,18 @@ export class UsersController {
   @Roles(Role.ADMIN, Role.DNCF)
   update(@Param('id') id: string, @Body() updateUserDto: any, @CurrentUser() currentUser: any) {
     // Un utilisateur peut mettre à jour ses propres données (signature, cachet), ou un admin peut mettre à jour n'importe quel utilisateur
-    if (currentUser.role !== Role.ADMIN && currentUser.id !== id) {
+    const userRoles = (currentUser.roles && Array.isArray(currentUser.roles) && currentUser.roles.length > 0)
+      ? currentUser.roles
+      : (currentUser.role ? [currentUser.role] : []);
+    const isAdmin = userRoles.includes(Role.ADMIN);
+    const isDNCF = userRoles.includes(Role.DNCF);
+    
+    if (!isAdmin && currentUser.id !== id) {
       throw new ForbiddenException('Vous ne pouvez modifier que vos propres données');
     }
     
     // Si c'est le DNCF qui met à jour ses propres données, ne permettre que signature et cachet
-    if (currentUser.role === Role.DNCF && currentUser.id === id) {
+    if (isDNCF && currentUser.id === id) {
       const allowedFields = ['signatureImageId', 'cachetImageId'];
       const filteredData: any = {};
       for (const field of allowedFields) {

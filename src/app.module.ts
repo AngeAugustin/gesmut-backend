@@ -15,6 +15,7 @@ import { WorkflowModule } from './workflow/workflow.module';
 import { AuditModule } from './audit/audit.module';
 import { UploadModule } from './upload/upload.module';
 import { EmailModule } from './email/email.module';
+import { MutationsAutomatiquesModule } from './mutations-automatiques/mutations-automatiques.module';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 
 @Module({
@@ -36,6 +37,7 @@ import { AuditInterceptor } from './common/interceptors/audit.interceptor';
     AuditModule,
     UploadModule,
     EmailModule,
+    MutationsAutomatiquesModule,
   ],
   controllers: [],
   providers: [

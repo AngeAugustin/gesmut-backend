@@ -20,13 +20,22 @@ export class RolesGuard implements CanActivate {
       console.warn('RolesGuard: Aucun utilisateur trouvé dans la requête');
       return false;
     }
+    // Gérer les rôles multiples : utiliser roles si disponible, sinon role pour compatibilité
+    const userRoles = user.roles && Array.isArray(user.roles) && user.roles.length > 0
+      ? user.roles
+      : user.role
+        ? [user.role] // Compatibilité avec ancien format
+        : [];
+    
     // Comparaison insensible à la casse pour plus de robustesse
-    const userRole = user.role?.toUpperCase();
-    const hasAccess = requiredRoles.some((role) => userRole === role.toUpperCase());
+    const userRolesUpper = userRoles.map((r: string) => r.toUpperCase());
+    const hasAccess = requiredRoles.some((role) => 
+      userRolesUpper.includes(role.toUpperCase())
+    );
     
     if (!hasAccess) {
       console.warn('RolesGuard: Accès refusé', {
-        userRole: user.role,
+        userRoles: userRoles,
         requiredRoles,
         userId: user._id || user.id,
       });

@@ -222,8 +222,45 @@ export class DocumentsService {
       const poste = demandeData.posteSouhaiteId;
       const posteLibelle = typeof poste === 'object' && poste !== null ? poste.intitule : 'Non spécifié';
       
-      const localisation = demandeData.localisationSouhaiteId;
-      const localisationLibelle = typeof localisation === 'object' && localisation !== null ? localisation.libelle : 'Non spécifiée';
+      // Récupérer le service du poste de destination
+      let serviceDestination = 'Non spécifié';
+      if (typeof poste === 'object' && poste !== null && poste.serviceId) {
+        const servicePoste = poste.serviceId;
+        if (typeof servicePoste === 'object' && servicePoste !== null) {
+          serviceDestination = servicePoste.libelle || 'Non spécifié';
+        } else {
+          serviceDestination = servicePoste?.toString() || 'Non spécifié';
+        }
+      }
+      
+      // Récupérer la localisation du poste de destination
+      let localisationDestination = 'Non spécifiée';
+      if (typeof poste === 'object' && poste !== null && poste.localisationId) {
+        const localisationPoste = poste.localisationId;
+        if (typeof localisationPoste === 'object' && localisationPoste !== null) {
+          localisationDestination = localisationPoste.libelle || 'Non spécifiée';
+        } else {
+          localisationDestination = localisationPoste?.toString() || 'Non spécifiée';
+        }
+      }
+      
+      // Si la localisation du poste n'est pas disponible, utiliser celle de la demande en fallback
+      if (localisationDestination === 'Non spécifiée') {
+        const localisations = demandeData.localisationsSouhaitees || (demandeData.localisationSouhaiteId ? [demandeData.localisationSouhaiteId] : []);
+        const localisationsLibelles = Array.isArray(localisations)
+          ? localisations
+              .map((loc) => {
+                if (typeof loc === 'object' && loc !== null) {
+                  return loc.libelle || '';
+                }
+                return '';
+              })
+              .filter((lib) => lib !== '')
+          : [];
+        if (localisationsLibelles.length > 0) {
+          localisationDestination = localisationsLibelles.join(', ');
+        }
+      }
       
       // Informations de l'agent (si agentId est populé)
       const grade = typeof agentInfo?.gradeId === 'object' && agentInfo?.gradeId !== null ? agentInfo.gradeId.libelle : 'Non spécifié';
@@ -251,13 +288,28 @@ export class DocumentsService {
         serviceActuel: serviceActuel,
         localisationActuelle: localisationActuelle,
         posteSouhaite: posteLibelle,
-        serviceDestination: posteLibelle.includes('Direction') ? posteLibelle : `Service de ${posteLibelle}`,
-        localisationDestination: localisationLibelle,
-        dateEffet: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString('fr-FR', {
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric'
-        }),
+        serviceDestination: serviceDestination,
+        localisationDestination: localisationDestination,
+        dateEffet: (() => {
+          // Utiliser la date de mutation si elle existe, sinon utiliser la date actuelle (mutation immédiate)
+          if (demandeData.dateMutation) {
+            const dateMutation = demandeData.dateMutation instanceof Date 
+              ? demandeData.dateMutation 
+              : new Date(demandeData.dateMutation);
+            return dateMutation.toLocaleDateString('fr-FR', {
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric'
+            });
+          } else {
+            // Mutation immédiate : utiliser la date actuelle
+            return new Date().toLocaleDateString('fr-FR', {
+              year: 'numeric',
+              month: 'long',
+              day: 'numeric'
+            });
+          }
+        })(),
         dateNaissance: agentInfo?.dateNaissance 
           ? (agentInfo.dateNaissance instanceof Date 
               ? agentInfo.dateNaissance.toLocaleDateString('fr-FR', {

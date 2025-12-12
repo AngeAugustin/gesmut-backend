@@ -15,10 +15,17 @@ export class ValidationsController {
   @UseGuards(RolesGuard)
   @Roles(Role.RESPONSABLE, Role.DGR, Role.CVR, Role.DNCF)
   create(@Body() createValidationDto: any, @CurrentUser() user: any) {
+    // Utiliser le validateurRole fourni par le frontend (spécifie le rôle sous lequel on valide)
+    // Si non fourni, utiliser le premier rôle de l'utilisateur
+    const userRoles = (user.roles && Array.isArray(user.roles) && user.roles.length > 0)
+      ? user.roles
+      : (user.role ? [user.role] : []);
+    const validateurRole = createValidationDto.validateurRole || userRoles[0] || user.role;
+    
     return this.validationsService.create({
       ...createValidationDto,
       validateurId: user.id,
-      validateurRole: user.role,
+      validateurRole: validateurRole,
     });
   }
 

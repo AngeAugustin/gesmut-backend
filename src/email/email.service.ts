@@ -211,7 +211,7 @@ export class EmailService {
           ` : ''}
           ${demandeDetails.posteSouhaite ? `
           <tr>
-            <td style="padding: 8px; font-weight: bold;">Poste souhaité :</td>
+            <td style="padding: 8px; font-weight: bold;">Nouveau poste :</td>
             <td style="padding: 8px;">${demandeDetails.posteSouhaite}</td>
           </tr>
           ` : ''}

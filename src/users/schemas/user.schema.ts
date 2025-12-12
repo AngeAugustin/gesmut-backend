@@ -18,8 +18,11 @@ export class User {
   @Prop({ required: true })
   prenom: string;
 
-  @Prop({ type: String, enum: Role, required: true })
-  role: Role;
+  @Prop({ type: [String], enum: Role, required: true, default: [] })
+  roles: Role[];
+
+  @Prop({ type: String, enum: Role, required: false })
+  role?: Role; // Ancien champ pour compatibilité, sera supprimé après migration
 
   @Prop({ default: true })
   isActive: boolean;

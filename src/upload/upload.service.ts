@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectConnection } from '@nestjs/mongoose';
 import { Connection } from 'mongoose';
 import { GridFSBucket, ObjectId } from 'mongodb';
@@ -31,18 +31,30 @@ export class UploadService {
   }
 
   async getFile(fileId: string): Promise<{ stream: NodeJS.ReadableStream; filename: string; contentType: string }> {
-    const objectId = new ObjectId(fileId);
-    const files = await this.gridFS.find({ _id: objectId }).toArray();
-    if (files.length === 0) {
-      throw new Error('File not found');
+    if (!fileId) {
+      throw new NotFoundException('File ID is required');
     }
-    const file = files[0];
-    const stream = this.gridFS.openDownloadStream(objectId);
-    return {
-      stream,
-      filename: file.filename,
-      contentType: file.contentType || 'application/octet-stream',
-    };
+    
+    try {
+      const objectId = new ObjectId(fileId);
+      const files = await this.gridFS.find({ _id: objectId }).toArray();
+      if (files.length === 0) {
+        throw new NotFoundException(`File with ID ${fileId} not found`);
+      }
+      const file = files[0];
+      const stream = this.gridFS.openDownloadStream(objectId);
+      return {
+        stream,
+        filename: file.filename,
+        contentType: file.contentType || 'application/octet-stream',
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      // Si l'ObjectId est invalide, lancer une NotFoundException
+      throw new NotFoundException(`Invalid file ID: ${fileId}`);
+    }
   }
 
   async deleteFile(fileId: string): Promise<void> {

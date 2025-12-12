@@ -47,29 +47,35 @@ export class PostesController {
     return this.postesService.findOne(id);
   }
 
+  @Get(':id/historique-agents')
+  @UseGuards(JwtAuthGuard)
+  getHistoriqueAgents(@Param('id') id: string) {
+    return this.postesService.getHistoriqueAgents(id);
+  }
+
   @Patch(':id')
-  @UseGuards(RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.DGR)
   update(@Param('id') id: string, @Body() updatePosteDto: any) {
     return this.postesService.update(id, updatePosteDto);
   }
 
   @Post(':id/affecter')
-  @UseGuards(RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.DGR)
   affecterAgent(@Param('id') id: string, @Body() body: { agentId: string }) {
     return this.postesService.affecterAgent(id, body.agentId);
   }
 
   @Post(':id/liberer')
-  @UseGuards(RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.DGR)
   libererPoste(@Param('id') id: string) {
     return this.postesService.libererPoste(id);
   }
 
   @Delete(':id')
-  @UseGuards(RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
   remove(@Param('id') id: string) {
     return this.postesService.remove(id);

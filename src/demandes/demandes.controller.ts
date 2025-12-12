@@ -18,10 +18,23 @@ export class DemandesController {
 
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.AGENT)
+  @Roles(Role.AGENT, Role.DGR, Role.CVR)
   create(@Body() createDemandeDto: any, @CurrentUser() user: any) {
-    // Récupérer l'agentId depuis l'utilisateur
-    return this.demandesService.create(createDemandeDto, user.agentId);
+    // IMPORTANT: Le rôle doit être celui de l'utilisateur connecté (qui crée la demande),
+    // pas celui de l'agent pour qui la demande est créée
+    // Gérer les rôles multiples : utiliser le premier rôle
+    const userRoles = (user.roles && Array.isArray(user.roles) && user.roles.length > 0)
+      ? user.roles
+      : (user.role ? [user.role] : []);
+    const userRole = userRoles[0] || user.role;
+    // L'agentId peut être celui de l'utilisateur connecté OU celui trouvé par matricule/NPI/IFU
+    // Mais le rôle doit TOUJOURS être celui de l'utilisateur connecté
+    const userAgentId = user.agentId || (user as any).agentId;
+    console.log('🔍 [CONTROLLER] Création de demande - User complet:', JSON.stringify(user, null, 2));
+    console.log('🔍 [CONTROLLER] Rôle de l\'utilisateur connecté:', userRole, 'Type:', typeof userRole);
+    console.log('🔍 [CONTROLLER] AgentId de l\'utilisateur connecté:', userAgentId);
+    // Passer le rôle de l'utilisateur connecté, pas celui de l'agent de la demande
+    return this.demandesService.create(createDemandeDto, userAgentId, userRole);
   }
 
   @Get()
@@ -67,9 +80,18 @@ export class DemandesController {
 
   @Put(':id/soumettre')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.AGENT)
-  soumettre(@Param('id') id: string) {
-    return this.demandesService.soumettre(id);
+  @Roles(Role.AGENT, Role.DGR, Role.CVR)
+  soumettre(@Param('id') id: string, @CurrentUser() user: any) {
+    // Gérer les rôles multiples : utiliser le premier rôle
+    const userRoles = (user.roles && Array.isArray(user.roles) && user.roles.length > 0)
+      ? user.roles
+      : (user.role ? [user.role] : []);
+    const userRole = userRoles[0] || user.role;
+    const userAgentId = user.agentId || (user as any).agentId;
+    console.log('🔍 [CONTROLLER] Soumission de demande - User complet:', JSON.stringify(user, null, 2));
+    console.log('🔍 [CONTROLLER] Rôle extrait:', userRole, 'Type:', typeof userRole);
+    console.log('🔍 [CONTROLLER] AgentId extrait:', userAgentId, 'DemandeId:', id);
+    return this.demandesService.soumettre(id, userRole);
   }
 
   @Post('strategique')

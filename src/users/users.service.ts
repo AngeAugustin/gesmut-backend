@@ -36,6 +36,10 @@ export class UsersService {
     return this.userModel.findOne({ email }).exec();
   }
 
+  async findByAgentId(agentId: string): Promise<User | null> {
+    return this.userModel.findOne({ agentId: agentId.toString() }).exec();
+  }
+
   async validateUser(email: string, password: string): Promise<User | null> {
     const user = await this.findByEmail(email);
     if (user && (await bcrypt.compare(password, user.password))) {

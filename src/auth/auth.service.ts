@@ -27,7 +27,13 @@ export class AuthService {
       // Mettre à jour la dernière connexion
       await this.usersService.update(userDoc._id.toString(), { lastLogin: new Date() });
 
-      const payload = { email: userDoc.email, sub: userDoc._id.toString(), role: userDoc.role };
+      // Gérer les rôles multiples : utiliser roles si disponible, sinon role pour compatibilité
+      const userRoles = (userDoc.roles && Array.isArray(userDoc.roles) && userDoc.roles.length > 0)
+        ? userDoc.roles
+        : (userDoc.role ? [userDoc.role] : []);
+      const primaryRole = userRoles[0] || 'AGENT'; // Rôle principal pour le JWT (compatibilité)
+      
+      const payload = { email: userDoc.email, sub: userDoc._id.toString(), roles: userRoles, role: primaryRole };
       return {
         access_token: this.jwtService.sign(payload),
         user: {
@@ -35,7 +41,8 @@ export class AuthService {
           email: userDoc.email,
           nom: userDoc.nom,
           prenom: userDoc.prenom,
-          role: userDoc.role,
+          roles: userRoles,
+          role: primaryRole, // Rôle principal pour compatibilité frontend
           serviceId: userDoc.serviceId,
           directionId: userDoc.directionId,
           agentId: userDoc.agentId,
@@ -52,13 +59,13 @@ export class AuthService {
 
   async register(registerDto: RegisterDto, createdByAdmin: boolean = false) {
     // Empêcher la création de comptes avec le rôle AGENT
-    if (registerDto.role === Role.AGENT) {
+    if (registerDto.roles.includes(Role.AGENT)) {
       throw new BadRequestException('Les agents ne peuvent pas créer de compte. Utilisez le formulaire public pour faire une demande.');
     }
 
     const existingUser = await this.usersService.findByEmail(registerDto.email);
     if (existingUser) {
-      throw new UnauthorizedException('Cet email est déjà utilisé');
+      throw new BadRequestException('Cet email est déjà utilisé');
     }
 
     // Déterminer si le compte doit être actif
@@ -75,9 +82,19 @@ export class AuthService {
       try {
         // Trouver tous les admins
         const admins = await this.usersService.findAll();
-        const adminUsers = admins.filter(u => u.role === Role.ADMIN && u.isActive);
+        const adminUsers = admins.filter(u => {
+          const userRoles = (u.roles && Array.isArray(u.roles) && u.roles.length > 0)
+            ? u.roles
+            : (u.role ? [u.role] : []);
+          return userRoles.includes(Role.ADMIN) && u.isActive;
+        });
         
         // Créer une notification pour chaque admin
+        const userRoles = (userDoc.roles && Array.isArray(userDoc.roles) && userDoc.roles.length > 0)
+          ? userDoc.roles
+          : (userDoc.role ? [userDoc.role] : []);
+        const rolesLabel = userRoles.join(', ');
+        
         for (const admin of adminUsers) {
           const adminId = (admin as any)._id?.toString();
           if (!adminId) continue; // Ignorer si pas d'ID
@@ -85,7 +102,7 @@ export class AuthService {
             destinataireId: adminId,
             type: 'IN_APP',
             titre: 'Nouveau compte en attente de validation',
-            contenu: `Un nouvel utilisateur (${userDoc.prenom} ${userDoc.nom} - ${userDoc.email}) avec le rôle ${userDoc.role} a créé un compte et attend votre validation.`,
+            contenu: `Un nouvel utilisateur (${userDoc.prenom} ${userDoc.nom} - ${userDoc.email}) avec le(s) rôle(s) ${rolesLabel} a créé un compte et attend votre validation.`,
             actionUrl: `/admin/utilisateurs`,
           });
         }
@@ -95,9 +112,15 @@ export class AuthService {
       }
     }
 
+    // Gérer les rôles multiples
+    const userRoles = (userDoc.roles && Array.isArray(userDoc.roles) && userDoc.roles.length > 0)
+      ? userDoc.roles
+      : (userDoc.role ? [userDoc.role] : []);
+    const primaryRole = userRoles[0] || 'AGENT';
+    
     // Si créé par admin ou si isActive est true, retourner le token directement
     if (createdByAdmin || shouldBeActive) {
-      const payload = { email: userDoc.email, sub: userDoc._id.toString(), role: userDoc.role };
+      const payload = { email: userDoc.email, sub: userDoc._id.toString(), roles: userRoles, role: primaryRole };
       return {
         access_token: this.jwtService.sign(payload),
         user: {
@@ -105,7 +128,8 @@ export class AuthService {
           email: userDoc.email,
           nom: userDoc.nom,
           prenom: userDoc.prenom,
-          role: userDoc.role,
+          roles: userRoles,
+          role: primaryRole,
           serviceId: userDoc.serviceId,
           directionId: userDoc.directionId,
           agentId: userDoc.agentId,
@@ -121,7 +145,8 @@ export class AuthService {
         email: userDoc.email,
         nom: userDoc.nom,
         prenom: userDoc.prenom,
-        role: userDoc.role,
+        roles: userRoles,
+        role: primaryRole,
         serviceId: userDoc.serviceId,
         directionId: userDoc.directionId,
         agentId: userDoc.agentId,

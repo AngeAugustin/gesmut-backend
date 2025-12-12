@@ -34,8 +34,11 @@ export class Demande {
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Poste' })
   posteSouhaiteId?: MongooseSchema.Types.ObjectId;
 
+  @Prop({ type: [MongooseSchema.Types.ObjectId], ref: 'Localite', default: [] })
+  localisationsSouhaitees?: MongooseSchema.Types.ObjectId[];
+
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Localite' })
-  localisationSouhaiteId?: MongooseSchema.Types.ObjectId;
+  localisationSouhaiteId?: MongooseSchema.Types.ObjectId; // Conservé pour compatibilité ascendante
 
   @Prop({ type: [Object], default: [] })
   piecesJustificatives: PieceJustificative[];
@@ -59,6 +62,9 @@ export class Demande {
   dateExpiration?: Date; // Délai paramétrable
 
   @Prop()
+  dateMutation?: Date; // Date à laquelle la mutation doit être appliquée automatiquement
+
+  @Prop()
   reponseAgent?: 'ACCEPTEE' | 'RECOURS'; // Pour mutations stratégiques
 
   @Prop()
@@ -76,6 +82,9 @@ export class Demande {
     adresseVille?: string;
     sexe?: string;
     email?: string; // Email pour recevoir la décision finale
+    telephone?: string;
+    ifu?: string; // Identifiant Fiscal Unique
+    npi?: string; // Numéro Personnel d'Identification
     directionId?: string; // Direction de l'agent (pour déterminer les responsables)
     serviceId?: string; // Service de l'agent (pour déterminer les responsables)
     conjoints?: Array<{ code?: string; nom: string; prenom: string }>;

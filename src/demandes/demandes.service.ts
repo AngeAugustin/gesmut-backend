@@ -2,14 +2,18 @@ import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Demande, DemandeDocument } from './schemas/demande.schema';
+import { Agent, AgentDocument } from '../agents/schemas/agent.schema';
+import { Poste, PosteDocument } from '../postes/schemas/poste.schema';
 import { DemandeStatus } from '../common/enums/demande-status.enum';
 import { MutationType } from '../common/enums/mutation-type.enum';
+import { Role } from '../common/enums/roles.enum';
 import { AgentsService } from '../agents/agents.service';
 import { PostesService } from '../postes/postes.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { EmailService } from '../email/email.service';
 import { ReferentielsService } from '../referentiels/referentiels.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class DemandesService {
@@ -17,11 +21,14 @@ export class DemandesService {
 
   constructor(
     @InjectModel(Demande.name) private demandeModel: Model<DemandeDocument>,
+    @InjectModel(Agent.name) private agentModel: Model<AgentDocument>,
+    @InjectModel(Poste.name) private posteModel: Model<PosteDocument>,
     private agentsService: AgentsService,
     private postesService: PostesService,
     private workflowService: WorkflowService,
     private emailService: EmailService,
     private notificationsService: NotificationsService,
+    private usersService: UsersService,
   ) {}
 
   async createPublic(createDemandeDto: any): Promise<Demande> {
@@ -48,9 +55,57 @@ export class DemandesService {
       this.logger.log(`Demande publique créée avec serviceId: ${createDemandeDto.informationsAgent.serviceId}`);
     }
 
+    // Chercher l'agent par matricule/NPI/IFU pour récupérer son agentId
+    let agentId: string | null = null;
+    let roleFinal: Role | string | null = null;
+    
+    try {
+      const matricule = createDemandeDto.informationsAgent?.matricule;
+      const npi = createDemandeDto.informationsAgent?.npi;
+      const ifu = createDemandeDto.informationsAgent?.ifu;
+      
+      let agent = null;
+      if (matricule) {
+        agent = await this.agentsService.findByIdentifier('matricule', matricule);
+      } else if (npi) {
+        agent = await this.agentsService.findByIdentifier('npi', npi);
+      } else if (ifu) {
+        agent = await this.agentsService.findByIdentifier('ifu', ifu);
+      }
+      
+      if (agent) {
+        const agentDoc = agent as any;
+        agentId = agentDoc._id?.toString() || agentDoc.id?.toString() || null;
+        this.logger.log(`🔍 [SERVICE] Agent trouvé avec ID: ${agentId}`);
+        
+        // Chercher l'utilisateur qui a cet agentId pour récupérer son rôle
+        if (agentId) {
+          const user = await this.usersService.findByAgentId(agentId);
+          if (user) {
+            // Gérer les rôles multiples : utiliser le premier rôle
+            const userRoles = (user.roles && Array.isArray(user.roles) && user.roles.length > 0)
+              ? user.roles
+              : (user.role ? [user.role] : []);
+            roleFinal = userRoles[0];
+            this.logger.log(`🔍 [SERVICE] Utilisateur trouvé avec agentId ${agentId}, rôle: ${roleFinal} (rôles disponibles: ${userRoles.join(', ')})`);
+          } else {
+            this.logger.warn(`⚠️ [SERVICE] Aucun utilisateur trouvé avec agentId: ${agentId}`);
+          }
+        }
+      } else {
+        this.logger.warn(`⚠️ [SERVICE] Agent non trouvé avec matricule/NPI/IFU fourni`);
+      }
+    } catch (error) {
+      this.logger.error(`❌ [SERVICE] Erreur lors de la recherche de l'agent/utilisateur: ${error.message}`);
+    }
+
+    // Normaliser le rôle pour la comparaison
+    const roleNormalise = roleFinal ? String(roleFinal).toUpperCase().trim() : null;
+    this.logger.log(`🔍 [SERVICE] Demande publique - Rôle détecté: "${roleNormalise}" (agentId: ${agentId})`);
+
     const demande = new this.demandeModel({
       ...createDemandeDto,
-      agentId: null, // Pas d'agentId car l'agent n'est pas connecté
+      agentId: agentId || null, // Utiliser l'agentId trouvé si disponible
       type: MutationType.SIMPLE,
       statut: DemandeStatus.BROUILLON,
     });
@@ -59,14 +114,34 @@ export class DemandesService {
     const demandeDoc = await demande.save() as DemandeDocument;
     this.logger.log(`Demande sauvegardée avec informationsAgent.serviceId: ${demandeDoc.informationsAgent?.serviceId}`);
     
-    // Soumettre automatiquement la demande (sans vérification d'éligibilité car pas d'agentId)
-    demandeDoc.statut = DemandeStatus.EN_VALIDATION_HIERARCHIQUE;
-    demandeDoc.dateSoumission = new Date();
-    
-    const savedDemande = await demandeDoc.save();
+    // Adapter le workflow selon le rôle de l'utilisateur
+    let savedDemande: DemandeDocument;
+    if (roleNormalise === Role.CVR || roleNormalise === 'CVR') {
+      // Pour un utilisateur CVR, passer directement à l'étape CVR (sans Responsable ni DGR)
+      this.logger.log(`✅ [SERVICE] Demande publique créée par un utilisateur CVR, workflow adapté : CVR → DNCF`);
+      demandeDoc.statut = DemandeStatus.EN_VERIFICATION_CVR;
+      demandeDoc.dateSoumission = new Date();
+      savedDemande = await demandeDoc.save();
+      this.logger.log(`✅ [SERVICE] Demande ${savedDemande._id} mise à jour avec statut: ${savedDemande.statut}`);
+      // Ne pas notifier les responsables ni la DGR pour les demandes CVR
+    } else if (roleNormalise === Role.DGR || roleNormalise === 'DGR') {
+      // Pour un utilisateur DGR, passer directement à l'étape DGR (sans Responsable)
+      this.logger.log(`✅ [SERVICE] Demande publique créée par un utilisateur DGR, workflow adapté : DGR → CVR → DNCF`);
+      demandeDoc.statut = DemandeStatus.EN_ETUDE_DGR;
+      demandeDoc.dateSoumission = new Date();
+      savedDemande = await demandeDoc.save();
+      this.logger.log(`✅ [SERVICE] Demande ${savedDemande._id} mise à jour avec statut: ${savedDemande.statut}`);
+      // Ne pas notifier les responsables pour les demandes DGR
+    } else {
+      // Workflow normal pour les autres agents
+      this.logger.log(`⚠️ [SERVICE] Demande publique créée par un agent (rôle: "${roleNormalise}"), workflow normal : Responsable → DGR → CVR → DNCF`);
+      demandeDoc.statut = DemandeStatus.EN_VALIDATION_HIERARCHIQUE;
+      demandeDoc.dateSoumission = new Date();
+      savedDemande = await demandeDoc.save();
 
-    // Notifier les responsables hiérarchiques
-    await this.notifierResponsables(savedDemande);
+      // Notifier les responsables hiérarchiques
+      await this.notifierResponsables(savedDemande);
+    }
 
     // Envoyer l'email de confirmation si l'email est fourni
     if (createDemandeDto.informationsAgent?.email) {
@@ -80,14 +155,21 @@ export class DemandesService {
           posteSouhaite = poste?.intitule || '';
         }
 
-        if (savedDemande.localisationSouhaiteId) {
+        // Gérer les localisations multiples (nouveau) ou unique (ancien pour compatibilité)
+        const localisationsIds = savedDemande.localisationsSouhaitees || (savedDemande.localisationSouhaiteId ? [savedDemande.localisationSouhaiteId] : []);
+        if (localisationsIds.length > 0) {
           try {
-            // Récupérer la localisation depuis le modèle directement
             const localiteModel = this.demandeModel.db.model('Localite');
-            const localite = await localiteModel.findById(savedDemande.localisationSouhaiteId);
-            localisationSouhaitee = localite?.libelle || savedDemande.localisationSouhaiteId.toString();
+            const localites = await Promise.all(
+              localisationsIds.map((id) => localiteModel.findById(id))
+            );
+            const libelles = localites
+              .filter((loc) => loc !== null)
+              .map((loc) => loc.libelle)
+              .filter((lib) => lib);
+            localisationSouhaitee = libelles.length > 0 ? libelles.join(', ') : '';
           } catch (error) {
-            localisationSouhaitee = savedDemande.localisationSouhaiteId.toString();
+            localisationSouhaitee = localisationsIds.map((id) => id.toString()).join(', ');
           }
         }
 
@@ -124,11 +206,37 @@ export class DemandesService {
     return savedDemande;
   }
 
-  async create(createDemandeDto: any, agentId: string): Promise<Demande> {
-    // Vérifier que l'agent ne crée que des mutations simples
+  async create(createDemandeDto: any, agentId: string, demandeurRole?: Role | string): Promise<Demande> {
+    // Vérifier que l'agent/DGR ne crée que des mutations simples
     if (createDemandeDto.type === MutationType.STRATEGIQUE) {
-      throw new BadRequestException('Un agent ne peut créer que des mutations simples');
+      throw new BadRequestException('Un agent ou un membre de la DGR ne peut créer que des mutations simples');
     }
+
+    // Si le rôle n'est pas fourni, chercher l'utilisateur par agentId pour récupérer son rôle
+    let roleFinal = demandeurRole;
+    if (!roleFinal && agentId) {
+      try {
+        // Chercher l'utilisateur qui a cet agentId
+        const user = await this.usersService.findByAgentId(agentId.toString());
+        if (user) {
+          // Gérer les rôles multiples : utiliser le premier rôle
+          const userRoles = (user.roles && Array.isArray(user.roles) && user.roles.length > 0)
+            ? user.roles
+            : (user.role ? [user.role] : []);
+          roleFinal = userRoles[0];
+          this.logger.log(`🔍 [SERVICE] Rôle récupéré depuis l'utilisateur (agentId: ${agentId}): ${roleFinal} (rôles disponibles: ${userRoles.join(', ')})`);
+        } else {
+          this.logger.warn(`⚠️ [SERVICE] Aucun utilisateur trouvé avec agentId: ${agentId}, utilisation du rôle fourni: ${demandeurRole}`);
+        }
+      } catch (error) {
+        this.logger.error(`❌ [SERVICE] Erreur lors de la recherche de l'utilisateur par agentId: ${error.message}`);
+      }
+    }
+
+    // Normaliser le rôle pour la comparaison (gérer les cas string et enum)
+    const roleNormalise = roleFinal ? String(roleFinal).toUpperCase().trim() : null;
+    this.logger.log(`🔍 [SERVICE] Création de demande - Rôle du demandeur: "${roleNormalise}" (original: "${demandeurRole}", final: "${roleFinal}")`);
+    this.logger.log(`🔍 [SERVICE] Comparaison: roleNormalise === Role.DGR: ${roleNormalise === Role.DGR}, roleNormalise === 'DGR': ${roleNormalise === 'DGR'}`);
 
     const demande = new this.demandeModel({
       ...createDemandeDto,
@@ -138,6 +246,29 @@ export class DemandesService {
     });
     
     const savedDemande = await demande.save();
+    let demandeFinale = savedDemande as DemandeDocument;
+
+    // Adapter le workflow selon le rôle du demandeur
+    if (roleNormalise === Role.CVR || roleNormalise === 'CVR') {
+      // Pour un utilisateur CVR, passer directement à l'étape CVR (sans Responsable ni DGR)
+      this.logger.log(`✅ [SERVICE] Demande créée par un membre CVR (${savedDemande._id}), workflow adapté : CVR → DNCF`);
+      demandeFinale.statut = DemandeStatus.EN_VERIFICATION_CVR;
+      demandeFinale.dateSoumission = new Date();
+      demandeFinale = await demandeFinale.save();
+      this.logger.log(`✅ [SERVICE] Demande ${savedDemande._id} mise à jour avec statut: ${demandeFinale.statut}`);
+      // Ne pas notifier les responsables ni la DGR pour les demandes CVR
+    } else if (roleNormalise === Role.DGR || roleNormalise === 'DGR') {
+      // Pour un utilisateur DGR, passer directement à l'étape DGR (sans Responsable)
+      this.logger.log(`✅ [SERVICE] Demande créée par un membre DGR (${savedDemande._id}), workflow adapté : DGR → CVR → DNCF`);
+      demandeFinale.statut = DemandeStatus.EN_ETUDE_DGR;
+      demandeFinale.dateSoumission = new Date();
+      demandeFinale = await demandeFinale.save();
+      this.logger.log(`✅ [SERVICE] Demande ${savedDemande._id} mise à jour avec statut: ${demandeFinale.statut}`);
+      // Ne pas notifier les responsables pour les demandes DGR
+      // La notification sera faite directement à la DGR
+    } else {
+      this.logger.log(`⚠️ [SERVICE] Demande créée en BROUILLON (rôle: "${roleNormalise}"), workflow normal : Responsable → DGR → CVR → DNCF`);
+    }
 
     // Envoyer l'email de confirmation si l'agent a un email
     try {
@@ -147,19 +278,26 @@ export class DemandesService {
         let posteSouhaite = '';
         let localisationSouhaitee = '';
 
-        if (savedDemande.posteSouhaiteId) {
-          const poste = await this.postesService.findOne(savedDemande.posteSouhaiteId.toString());
+        if (demandeFinale.posteSouhaiteId) {
+          const poste = await this.postesService.findOne(demandeFinale.posteSouhaiteId.toString());
           posteSouhaite = poste?.intitule || '';
         }
 
-        if (savedDemande.localisationSouhaiteId) {
+        // Gérer les localisations multiples (nouveau) ou unique (ancien pour compatibilité)
+        const localisationsIds = demandeFinale.localisationsSouhaitees || (demandeFinale.localisationSouhaiteId ? [demandeFinale.localisationSouhaiteId] : []);
+        if (localisationsIds.length > 0) {
           try {
-            // Récupérer la localisation depuis le modèle directement
             const localiteModel = this.demandeModel.db.model('Localite');
-            const localite = await localiteModel.findById(savedDemande.localisationSouhaiteId);
-            localisationSouhaitee = localite?.libelle || savedDemande.localisationSouhaiteId.toString();
+            const localites = await Promise.all(
+              localisationsIds.map((id) => localiteModel.findById(id))
+            );
+            const libelles = localites
+              .filter((loc) => loc !== null)
+              .map((loc) => loc.libelle)
+              .filter((lib) => lib);
+            localisationSouhaitee = libelles.length > 0 ? libelles.join(', ') : '';
           } catch (error) {
-            localisationSouhaitee = savedDemande.localisationSouhaiteId.toString();
+            localisationSouhaitee = localisationsIds.map((id) => id.toString()).join(', ');
           }
         }
 
@@ -175,25 +313,25 @@ export class DemandesService {
         await this.emailService.sendDemandeConfirmation({
           agentEmail: agent.email,
           agentName,
-          demandeId: savedDemande._id.toString(),
+          demandeId: demandeFinale._id.toString(),
           demandeDetails: {
-            motif: savedDemande.motif,
-            type: savedDemande.type,
-            statut: savedDemande.statut,
+            motif: demandeFinale.motif,
+            type: demandeFinale.type,
+            statut: demandeFinale.statut,
             posteSouhaite,
             localisationSouhaitee,
             dateCreation,
           },
         });
 
-        this.logger.log(`Email de confirmation envoyé à ${agent.email} pour la demande ${savedDemande._id}`);
+        this.logger.log(`Email de confirmation envoyé à ${agent.email} pour la demande ${demandeFinale._id}`);
       }
     } catch (error) {
       // Ne pas faire échouer la création de la demande si l'email échoue
-      this.logger.error(`Erreur lors de l'envoi de l'email de confirmation pour la demande ${savedDemande._id}: ${error.message}`, error.stack);
+      this.logger.error(`Erreur lors de l'envoi de l'email de confirmation pour la demande ${demandeFinale._id}: ${error.message}`, error.stack);
     }
 
-    return savedDemande;
+    return demandeFinale;
   }
 
   async findAll(): Promise<Demande[]> {
@@ -209,7 +347,7 @@ export class DemandesService {
           }
         }
       })
-      .populate('posteSouhaiteId localisationSouhaiteId')
+      .populate('posteSouhaiteId localisationsSouhaitees localisationSouhaiteId')
       .exec();
   }
 
@@ -258,16 +396,70 @@ export class DemandesService {
   }
 
   async findOne(id: string): Promise<Demande | null> {
-    return this.demandeModel.findById(id)
+    const demande = await this.demandeModel.findById(id)
       .populate({
         path: 'agentId',
-        populate: {
-          path: 'gradeId statutId serviceId localisationActuelleId posteActuelId',
-          select: 'libelle intitule code description'
-        }
+        populate: [
+          {
+            path: 'gradeId statutId serviceId localisationActuelleId',
+            select: 'libelle intitule code description'
+          },
+          {
+            path: 'affectationsPostes.posteId',
+            select: 'intitule description'
+          }
+        ]
       })
-      .populate('posteSouhaiteId localisationSouhaiteId validationIds documentIds')
+      .populate({
+        path: 'posteSouhaiteId',
+        populate: [
+          {
+            path: 'serviceId',
+            select: 'libelle code description'
+          },
+          {
+            path: 'localisationId',
+            select: 'libelle code description'
+          }
+        ]
+      })
+      .populate('localisationSouhaiteId validationIds documentIds')
       .exec();
+    
+    // Populate manuel des postes si nécessaire
+    if (demande && demande.agentId && (demande.agentId as any).affectationsPostes) {
+      const agent = demande.agentId as any;
+      if (agent.affectationsPostes && agent.affectationsPostes.length > 0) {
+        for (const affectation of agent.affectationsPostes) {
+          if (!affectation.posteId) continue;
+          
+          // Vérifier si le poste est déjà populé avec intitule
+          const isPopulated = typeof affectation.posteId === 'object' && 
+                             affectation.posteId !== null && 
+                             'intitule' in affectation.posteId;
+          
+          if (!isPopulated) {
+            // Récupérer l'ID du poste
+            let posteId: string;
+            if (typeof affectation.posteId === 'string') {
+              posteId = affectation.posteId;
+            } else if (typeof affectation.posteId === 'object' && '_id' in affectation.posteId) {
+              posteId = (affectation.posteId as any)._id.toString();
+            } else {
+              posteId = affectation.posteId.toString();
+            }
+            
+            // Récupérer le poste depuis la base de données
+            const poste = await this.posteModel.findById(posteId).select('intitule description').exec();
+            if (poste) {
+              affectation.posteId = poste as any;
+            }
+          }
+        }
+      }
+    }
+    
+    return demande;
   }
 
   async update(id: string, updateDemandeDto: any): Promise<Demande> {
@@ -281,13 +473,51 @@ export class DemandesService {
     return this.demandeModel.findByIdAndUpdate(id, updateDemandeDto, { new: true }).exec();
   }
 
-  async soumettre(id: string): Promise<Demande> {
+  async soumettre(id: string, demandeurRole?: Role | string): Promise<Demande> {
     const demande = await this.findOne(id);
     if (!demande) {
       throw new BadRequestException('Demande non trouvée');
     }
 
     const demandeDoc = demande as DemandeDocument;
+
+    // Si le rôle n'est pas fourni, chercher l'utilisateur par agentId pour récupérer son rôle
+    let roleFinal = demandeurRole;
+    if (!roleFinal && demandeDoc.agentId) {
+      try {
+        const agentIdValue = demandeDoc.agentId;
+        const agentId = typeof agentIdValue === 'object' && agentIdValue !== null
+          ? (agentIdValue as any)._id?.toString() || agentIdValue.toString()
+          : agentIdValue.toString();
+        
+        // Chercher l'utilisateur qui a cet agentId
+        const user = await this.usersService.findByAgentId(agentId);
+        if (user) {
+          // Gérer les rôles multiples : utiliser le premier rôle
+          const userRoles = (user.roles && Array.isArray(user.roles) && user.roles.length > 0)
+            ? user.roles
+            : (user.role ? [user.role] : []);
+          roleFinal = userRoles[0];
+          this.logger.log(`🔍 [SERVICE] Rôle récupéré depuis l'utilisateur (agentId: ${agentId}): ${roleFinal} (rôles disponibles: ${userRoles.join(', ')})`);
+        } else {
+          this.logger.warn(`⚠️ [SERVICE] Aucun utilisateur trouvé avec agentId: ${agentId}, utilisation du rôle fourni: ${demandeurRole}`);
+        }
+      } catch (error) {
+        this.logger.error(`❌ [SERVICE] Erreur lors de la recherche de l'utilisateur par agentId: ${error.message}`);
+      }
+    }
+
+    // Normaliser le rôle pour la comparaison (gérer les cas string et enum)
+    const roleNormalise = roleFinal ? String(roleFinal).toUpperCase().trim() : null;
+    this.logger.log(`🔍 [SERVICE] Soumission de demande ${id} - Rôle du demandeur: "${roleNormalise}" (original: "${demandeurRole}", final: "${roleFinal}"), statut actuel: ${demandeDoc.statut}`);
+    this.logger.log(`🔍 [SERVICE] Comparaison: roleNormalise === Role.DGR: ${roleNormalise === Role.DGR}, roleNormalise === 'DGR': ${roleNormalise === 'DGR'}`);
+
+    // Si la demande est déjà dans un statut avancé (créée directement par un DGR ou CVR), ne rien faire
+    if (demandeDoc.statut === DemandeStatus.EN_ETUDE_DGR || 
+        demandeDoc.statut === DemandeStatus.EN_VERIFICATION_CVR) {
+      this.logger.log(`✅ [SERVICE] Demande ${id} déjà dans un statut avancé (${demandeDoc.statut}), pas de modification nécessaire`);
+      return demandeDoc;
+    }
 
     // Vérifications automatiques de base
     await this.verifierEligibilite(demandeDoc);
@@ -302,7 +532,7 @@ export class DemandesService {
         posteId = posteIdValue.toString();
       } else {
         // Si posteIdValue est null/undefined, on ne peut pas continuer
-        throw new BadRequestException('Poste souhaité invalide');
+        throw new BadRequestException('Nouveau poste invalide');
       }
 
       if (!demandeDoc.agentId) {
@@ -323,14 +553,38 @@ export class DemandesService {
       // Vérification de l'agent effectuée, on continue avec la soumission
     }
 
-    demandeDoc.statut = DemandeStatus.EN_VALIDATION_HIERARCHIQUE;
-    demandeDoc.dateSoumission = new Date();
-    const savedDemande = await demandeDoc.save();
+    // Adapter le workflow selon le rôle du demandeur
+    if (roleNormalise === Role.CVR || roleNormalise === 'CVR') {
+      // Pour un demandeur CVR, passer directement à l'étape CVR (sans Responsable ni DGR)
+      this.logger.log(`✅ [SERVICE] Soumission par un membre CVR, workflow adapté : CVR → DNCF`);
+      demandeDoc.statut = DemandeStatus.EN_VERIFICATION_CVR;
+      demandeDoc.dateSoumission = new Date();
+      const savedDemande = await demandeDoc.save();
+      this.logger.log(`✅ [SERVICE] Demande ${id} mise à jour avec statut: ${savedDemande.statut}`);
+      // Ne pas notifier les responsables ni la DGR pour les demandes CVR
+      return savedDemande;
+    } else if (roleNormalise === Role.DGR || roleNormalise === 'DGR') {
+      // Pour un demandeur DGR, passer directement à l'étape DGR (sans Responsable)
+      this.logger.log(`✅ [SERVICE] Soumission par un membre DGR, workflow adapté : DGR → CVR → DNCF`);
+      demandeDoc.statut = DemandeStatus.EN_ETUDE_DGR;
+      demandeDoc.dateSoumission = new Date();
+      const savedDemande = await demandeDoc.save();
+      this.logger.log(`✅ [SERVICE] Demande ${id} mise à jour avec statut: ${savedDemande.statut}`);
+      // Ne pas notifier les responsables pour les demandes DGR
+      return savedDemande;
+    } else {
+      // Workflow normal pour les agents
+      this.logger.log(`⚠️ [SERVICE] Soumission par un agent (rôle: "${roleNormalise}"), workflow normal : Responsable → DGR → CVR → DNCF`);
+      demandeDoc.statut = DemandeStatus.EN_VALIDATION_HIERARCHIQUE;
+      demandeDoc.dateSoumission = new Date();
+      const savedDemande = await demandeDoc.save();
+      this.logger.log(`⚠️ [SERVICE] Demande ${id} mise à jour avec statut: ${savedDemande.statut}`);
 
-    // Notifier les responsables hiérarchiques
-    await this.notifierResponsables(savedDemande);
+      // Notifier les responsables hiérarchiques
+      await this.notifierResponsables(savedDemande);
 
-    return savedDemande;
+      return savedDemande;
+    }
   }
 
   /**
@@ -432,7 +686,7 @@ export class DemandesService {
     if (posteSouhaiteId) {
       const poste = await this.postesService.findOne(posteSouhaiteId);
       if (!poste || poste.statut !== 'LIBRE') {
-        throw new BadRequestException('Le poste souhaité n\'est pas disponible');
+        throw new BadRequestException('Le nouveau poste n\'est pas disponible');
       }
     }
 

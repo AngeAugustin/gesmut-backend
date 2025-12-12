@@ -16,6 +16,27 @@ export class Competence {
   niveau?: string;
 }
 
+// Sous-schéma pour les affectations de postes
+const AffectationPosteSchema = new MongooseSchema({
+  posteId: {
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'Poste',
+    required: true
+  },
+  dateDebut: {
+    type: Date,
+    required: true
+  },
+  dateFin: {
+    type: Date,
+    required: false
+  },
+  motifFin: {
+    type: String,
+    required: false
+  }
+}, { _id: false });
+
 @Schema({ timestamps: true })
 export class Agent {
   @Prop({ required: true, unique: true })
@@ -62,6 +83,12 @@ export class Agent {
   @Prop()
   telephone?: string;
 
+  @Prop()
+  ifu?: string; // Identifiant Fiscal Unique
+
+  @Prop()
+  npi?: string; // Numéro Personnel d'Identification
+
   @Prop({ required: true })
   dateEmbauche: Date; // Pour calculer l'ancienneté
 
@@ -74,8 +101,13 @@ export class Agent {
   @Prop({ type: [MongooseSchema.Types.ObjectId], ref: 'Diplome' })
   diplomeIds: MongooseSchema.Types.ObjectId[];
 
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Poste' })
-  posteActuelId?: MongooseSchema.Types.ObjectId;
+  @Prop({ type: [AffectationPosteSchema] })
+  affectationsPostes?: Array<{
+    posteId: MongooseSchema.Types.ObjectId; // Référence au poste
+    dateDebut: Date; // Date de prise de service à ce poste
+    dateFin?: Date; // Date de fin (null si poste actuel, sinon date de début du poste suivant ou mutation)
+    motifFin?: string; // Raison de la fin (mutation, promotion, etc.)
+  }>;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Localite' })
   localisationActuelleId?: MongooseSchema.Types.ObjectId;

@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Validation, ValidationDocument } from './schemas/validation.schema';
@@ -6,12 +6,16 @@ import { DemandesService } from '../demandes/demandes.service';
 import { DemandeStatus } from '../common/enums/demande-status.enum';
 import { Role } from '../common/enums/roles.enum';
 import { DemandeDocument } from '../demandes/schemas/demande.schema';
+import { MutationsAutomatiquesService } from '../mutations-automatiques/mutations-automatiques.service';
 
 @Injectable()
 export class ValidationsService {
+  private readonly logger = new Logger(ValidationsService.name);
+
   constructor(
     @InjectModel(Validation.name) private validationModel: Model<ValidationDocument>,
     private demandesService: DemandesService,
+    private mutationsAutomatiquesService: MutationsAutomatiquesService,
   ) {}
 
   async create(createValidationDto: any): Promise<Validation> {
@@ -27,12 +31,19 @@ export class ValidationsService {
       createValidationDto.decision,
       createValidationDto.validateurRole,
       savedValidation._id.toString(),
+      createValidationDto.dateMutation, // Passer la date de mutation si fournie
     );
 
     return savedValidation;
   }
 
-  async updateDemandeStatus(demandeId: string, decision: string, role: Role, validationId: string): Promise<void> {
+  async updateDemandeStatus(
+    demandeId: string,
+    decision: string,
+    role: Role,
+    validationId: string,
+    dateMutation?: Date,
+  ): Promise<void> {
     const demande = await this.demandesService.findOne(demandeId);
     if (!demande) {
       throw new BadRequestException('Demande non trouvée');
@@ -65,6 +76,10 @@ export class ValidationsService {
         demandeDoc.statut = DemandeStatus.EN_ETUDE_DNCF;
       } else if (role === Role.DNCF) {
         demandeDoc.statut = DemandeStatus.ACCEPTEE;
+        // Si une date de mutation est fournie, l'enregistrer
+        if (dateMutation) {
+          demandeDoc.dateMutation = dateMutation;
+        }
       }
     }
 
@@ -73,6 +88,26 @@ export class ValidationsService {
     }
     demandeDoc.validationIds.push(validationId);
     await demandeDoc.save();
+
+    // Si la demande est acceptée par le DNCF et qu'aucune date de mutation n'est fournie,
+    // appliquer la mutation immédiatement
+    if (decision === 'VALIDE' && role === Role.DNCF && !dateMutation) {
+      // Vérifier que la demande a un poste et un agent pour appliquer la mutation
+      if (demandeDoc.posteSouhaiteId && demandeDoc.agentId) {
+        try {
+          this.logger.log(`Application immédiate de la mutation pour la demande ${demandeId}`);
+          await this.mutationsAutomatiquesService.appliquerMutationManuelle(demandeId);
+          this.logger.log(`Mutation appliquée immédiatement pour la demande ${demandeId}`);
+        } catch (error) {
+          this.logger.error(
+            `Erreur lors de l'application immédiate de la mutation pour la demande ${demandeId}: ${error.message}`,
+            error.stack
+          );
+          // Ne pas faire échouer la validation si l'application de la mutation échoue
+          // La mutation pourra être appliquée plus tard via la tâche cron
+        }
+      }
+    }
   }
 
   async findByDemande(demandeId: string): Promise<Validation[]> {

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query } from '@nestjs/common';
 import { AgentsService } from './agents.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -6,9 +6,28 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/enums/roles.enum';
 
 @Controller('agents')
-@UseGuards(JwtAuthGuard)
 export class AgentsController {
   constructor(private readonly agentsService: AgentsService) {}
+
+  @Get('public/search/:type/:value')
+  async findByIdentifierPublic(@Param('type') type: string, @Param('value') value: string) {
+    if (!['matricule', 'npi', 'ifu'].includes(type)) {
+      return { found: false, error: 'Type de recherche invalide. Utilisez: matricule, npi ou ifu' };
+    }
+    
+    const agent = await this.agentsService.findByIdentifier(type as 'matricule' | 'npi' | 'ifu', value);
+    if (!agent) {
+      return { found: false };
+    }
+    // Retourner les informations complètes avec populate
+    // agent est un document Mongoose qui a _id
+    const agentId = (agent as any)._id?.toString();
+    if (!agentId) {
+      return { found: false };
+    }
+    const agentData = await this.agentsService.findOne(agentId);
+    return { found: true, agent: agentData };
+  }
 
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -59,6 +78,13 @@ export class AgentsController {
   @Roles(Role.DNCF)
   findEligibles(@Body() criteres: any) {
     return this.agentsService.findEligiblesPourMutationStrategique(criteres);
+  }
+
+  @Get('affectations/all')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  findAllAffectations() {
+    return this.agentsService.findAllAffectations();
   }
 }
 

@@ -77,7 +77,7 @@ export class AuthController {
         'REGISTER',
         'AUTH',
         result.user?.id,
-        { success: true, email: registerDto.email, role: registerDto.role },
+        { success: true, email: registerDto.email, roles: registerDto.roles },
         ip,
         userAgent,
         {
