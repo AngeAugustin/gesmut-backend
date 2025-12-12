@@ -5,6 +5,7 @@ import { Agent, AgentDocument } from './schemas/agent.schema';
 import { Poste, PosteDocument } from '../postes/schemas/poste.schema';
 import { UsersService } from '../users/users.service';
 import { Role } from '../common/enums/roles.enum';
+import { PosteStatus } from '../common/enums/poste-status.enum';
 
 @Injectable()
 export class AgentsService {
@@ -21,6 +22,57 @@ export class AgentsService {
     
     const agent = new this.agentModel(agentData);
     const savedAgent = await agent.save();
+    
+    // Synchroniser les postes avec les affectations actuelles (sans dateFin)
+    if (savedAgent.affectationsPostes && savedAgent.affectationsPostes.length > 0) {
+      const affectationsActuelles = savedAgent.affectationsPostes.filter((aff) => !aff.dateFin);
+      
+      for (const affectation of affectationsActuelles) {
+        if (!affectation.posteId) continue;
+        
+        // Récupérer l'ID du poste
+        let posteId: string;
+        if (typeof affectation.posteId === 'string') {
+          posteId = affectation.posteId;
+        } else if (typeof affectation.posteId === 'object' && '_id' in affectation.posteId) {
+          posteId = (affectation.posteId as any)._id.toString();
+        } else {
+          posteId = affectation.posteId.toString();
+        }
+        
+        // Récupérer le poste
+        const poste = await this.posteModel.findById(posteId);
+        if (!poste) continue;
+        
+        const posteDoc = poste as PosteDocument;
+        
+        // Si le poste avait déjà un autre agent, mettre à jour l'historique de cet agent
+        if (posteDoc.agentId && posteDoc.agentId.toString() !== savedAgent._id.toString()) {
+          const ancienAgent = await this.agentModel.findById(posteDoc.agentId);
+          if (ancienAgent && ancienAgent.affectationsPostes) {
+            // Marquer la fin de l'affectation précédente pour l'ancien agent
+            for (const aff of ancienAgent.affectationsPostes) {
+              const affPosteId = typeof aff.posteId === 'object' && aff.posteId !== null
+                ? (aff.posteId as any)._id?.toString() || (aff.posteId as any).toString()
+                : aff.posteId?.toString();
+              
+              if (affPosteId === posteId && !aff.dateFin) {
+                aff.dateFin = new Date();
+                aff.motifFin = 'Mutation';
+                break;
+              }
+            }
+            await ancienAgent.save();
+          }
+        }
+        
+        // Mettre à jour le poste avec le nouvel agent
+        posteDoc.agentId = savedAgent._id.toString() as any;
+        posteDoc.statut = PosteStatus.OCCUPE;
+        await posteDoc.save();
+      }
+    }
+    
     // Retourner l'agent avec les données populées
     return this.findOne(savedAgent._id.toString());
   }
@@ -178,7 +230,113 @@ export class AgentsService {
     const updateData = { ...updateAgentDto };
     delete updateData.responsableIds;
     
+    // Récupérer l'agent avant la mise à jour pour comparer les affectations
+    const agentAvant = await this.agentModel.findById(id);
+    const anciennesAffectationsActuelles: string[] = [];
+    
+    if (agentAvant && agentAvant.affectationsPostes) {
+      for (const aff of agentAvant.affectationsPostes) {
+        if (!aff.dateFin) {
+          const posteId = typeof aff.posteId === 'string'
+            ? aff.posteId
+            : (typeof aff.posteId === 'object' && aff.posteId !== null && '_id' in aff.posteId
+              ? (aff.posteId as any)._id.toString()
+              : aff.posteId?.toString());
+          if (posteId) {
+            anciennesAffectationsActuelles.push(posteId);
+          }
+        }
+      }
+    }
+    
     await this.agentModel.findByIdAndUpdate(id, updateData, { new: true }).exec();
+    
+    // Récupérer l'agent mis à jour
+    const agentApres = await this.agentModel.findById(id);
+    if (!agentApres) {
+      return this.findOne(id);
+    }
+    
+    // Libérer les postes qui ne sont plus affectés
+    const nouvellesAffectationsActuelles: string[] = [];
+    if (agentApres.affectationsPostes) {
+      for (const aff of agentApres.affectationsPostes) {
+        if (!aff.dateFin) {
+          const posteId = typeof aff.posteId === 'string'
+            ? aff.posteId
+            : (typeof aff.posteId === 'object' && aff.posteId !== null && '_id' in aff.posteId
+              ? (aff.posteId as any)._id.toString()
+              : aff.posteId?.toString());
+          if (posteId) {
+            nouvellesAffectationsActuelles.push(posteId);
+          }
+        }
+      }
+    }
+    
+    // Libérer les postes qui ne sont plus affectés
+    for (const ancienPosteId of anciennesAffectationsActuelles) {
+      if (!nouvellesAffectationsActuelles.includes(ancienPosteId)) {
+        const poste = await this.posteModel.findById(ancienPosteId);
+        if (poste && poste.agentId?.toString() === id) {
+          const posteDoc = poste as PosteDocument;
+          posteDoc.agentId = undefined;
+          posteDoc.statut = PosteStatus.LIBRE;
+          await posteDoc.save();
+        }
+      }
+    }
+    
+    // Synchroniser les nouvelles affectations actuelles (comme dans create)
+    if (agentApres.affectationsPostes && agentApres.affectationsPostes.length > 0) {
+      const affectationsActuelles = agentApres.affectationsPostes.filter((aff) => !aff.dateFin);
+      
+      for (const affectation of affectationsActuelles) {
+        if (!affectation.posteId) continue;
+        
+        // Récupérer l'ID du poste
+        let posteId: string;
+        if (typeof affectation.posteId === 'string') {
+          posteId = affectation.posteId;
+        } else if (typeof affectation.posteId === 'object' && '_id' in affectation.posteId) {
+          posteId = (affectation.posteId as any)._id.toString();
+        } else {
+          posteId = affectation.posteId.toString();
+        }
+        
+        // Récupérer le poste
+        const poste = await this.posteModel.findById(posteId);
+        if (!poste) continue;
+        
+        const posteDoc = poste as PosteDocument;
+        
+        // Si le poste avait déjà un autre agent, mettre à jour l'historique de cet agent
+        if (posteDoc.agentId && posteDoc.agentId.toString() !== agentApres._id.toString()) {
+          const ancienAgent = await this.agentModel.findById(posteDoc.agentId);
+          if (ancienAgent && ancienAgent.affectationsPostes) {
+            // Marquer la fin de l'affectation précédente pour l'ancien agent
+            for (const aff of ancienAgent.affectationsPostes) {
+              const affPosteId = typeof aff.posteId === 'object' && aff.posteId !== null
+                ? (aff.posteId as any)._id?.toString() || (aff.posteId as any).toString()
+                : aff.posteId?.toString();
+              
+              if (affPosteId === posteId && !aff.dateFin) {
+                aff.dateFin = new Date();
+                aff.motifFin = 'Mutation';
+                break;
+              }
+            }
+            await ancienAgent.save();
+          }
+        }
+        
+        // Mettre à jour le poste avec le nouvel agent
+        posteDoc.agentId = agentApres._id.toString() as any;
+        posteDoc.statut = PosteStatus.OCCUPE;
+        await posteDoc.save();
+      }
+    }
+    
     // Retourner l'agent avec les données populées
     return this.findOne(id);
   }

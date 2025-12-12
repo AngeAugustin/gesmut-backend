@@ -19,6 +19,75 @@ export class PostesService {
   }
 
   async findAll(): Promise<Poste[]> {
+    const postes = await this.posteModel.find().populate('gradeRequisId localisationId serviceId agentId').exec();
+    
+    // Synchroniser les agents affectés en se basant sur les affectations actuelles des agents
+    // Cela garantit que même si les données ne sont pas synchronisées, on affiche le bon agent
+    for (const poste of postes) {
+      // Si le poste a déjà un agentId, vérifier qu'il correspond bien à une affectation actuelle
+      if (poste.agentId) {
+        const agentId = typeof poste.agentId === 'object' && poste.agentId !== null
+          ? (poste.agentId as any)._id?.toString()
+          : poste.agentId.toString();
+        
+        const agent = await this.agentModel.findById(agentId);
+        if (agent && agent.affectationsPostes) {
+          const aAffectationActuelle = agent.affectationsPostes.some((aff) => {
+            const affPosteId = typeof aff.posteId === 'object' && aff.posteId !== null
+              ? (aff.posteId as any)._id?.toString() || (aff.posteId as any).toString()
+              : aff.posteId?.toString();
+            return affPosteId === poste._id.toString() && !aff.dateFin;
+          });
+          
+          // Si l'agent n'a plus d'affectation actuelle sur ce poste, corriger le poste
+          if (!aAffectationActuelle) {
+            const posteDoc = poste as PosteDocument;
+            posteDoc.agentId = undefined;
+            posteDoc.statut = PosteStatus.LIBRE;
+            await posteDoc.save();
+            poste.agentId = undefined;
+            poste.statut = PosteStatus.LIBRE;
+          }
+        }
+      }
+      
+      // Si le poste n'a pas d'agentId mais qu'un agent a une affectation actuelle, le synchroniser
+      if (!poste.agentId) {
+        const agentsAvecAffectation = await this.agentModel.find({
+          'affectationsPostes.posteId': poste._id,
+        }).exec();
+        
+        for (const agent of agentsAvecAffectation) {
+          if (agent.affectationsPostes) {
+            const aAffectationActuelle = agent.affectationsPostes.some((aff) => {
+              const affPosteId = typeof aff.posteId === 'object' && aff.posteId !== null
+                ? (aff.posteId as any)._id?.toString() || (aff.posteId as any).toString()
+                : aff.posteId?.toString();
+              return affPosteId === poste._id.toString() && !aff.dateFin;
+            });
+            
+            if (aAffectationActuelle) {
+              // Synchroniser le poste avec cet agent
+              const posteDoc = poste as PosteDocument;
+              posteDoc.agentId = agent._id.toString() as any;
+              posteDoc.statut = PosteStatus.OCCUPE;
+              await posteDoc.save();
+              // Repopulate agentId pour le retour
+              const posteAvecAgent = await this.posteModel.findById(poste._id)
+                .populate('gradeRequisId localisationId serviceId agentId')
+                .exec();
+              if (posteAvecAgent) {
+                poste.agentId = posteAvecAgent.agentId;
+                poste.statut = posteAvecAgent.statut;
+              }
+              break; // Un seul agent par poste
+            }
+          }
+        }
+      }
+    }
+    
+    // Repopulate tous les postes pour s'assurer que les données sont à jour
     return this.posteModel.find().populate('gradeRequisId localisationId serviceId agentId').exec();
   }
 
